@@ -1,5 +1,5 @@
 <template>
-    <div class="project-list">
+    <div class="project-list" :class="[tabTypeActive]">
         <PageTitle :title="projectData.name"/>
         <div class="project-head">
             <div class="project-titbox">
@@ -9,15 +9,15 @@
                     <div v-if="loading" class="project-load"><Loading/></div>
                 </div>
                 <ul class="project-icons">
-                    <li class="project-avatar" @click="projectDropdown('user')">
+                    <li class="project-avatar" :class="{'cursor-default': projectData.owner_userid !== userId}" @click="projectDropdown('user')">
                         <ul>
                             <li>
                                 <UserAvatar :userid="projectData.owner_userid" :size="36" :borderWitdh="2" :openDelay="0">
                                     <p>{{$L('项目负责人')}}</p>
                                 </UserAvatar>
-                                <Badge v-if="windowWidth <= 980 && projectUser.length > 0" type="normal" :count="projectData.project_user.length"/>
+                                <Badge v-if="(windowWidth <= 980 || projectParameter('chat')) && projectUser.length > 0" type="normal" :count="projectData.project_user.length"/>
                             </li>
-                            <template v-if="windowWidth > 980 && projectUser.length > 0" v-for="item in projectUser">
+                            <template v-if="!(windowWidth <= 980 || projectParameter('chat')) && projectUser.length > 0" v-for="item in projectUser">
                                 <li v-if="item.userid === -1" class="more">
                                     <ETooltip :content="$L('共' + (projectData.project_user.length) + '个成员')">
                                         <Icon type="ios-more"/>
@@ -153,6 +153,7 @@
                             :disabled="sortDisabled || !isDesktop"
                             class="task-list"
                             draggable=".task-draggable"
+                            filter=".complete"
                             group="task"
                             @sort="sortUpdate"
                             @remove="sortUpdate">
@@ -328,7 +329,7 @@
                     <Input ref="projectName" type="text" v-model="settingData.name" :maxlength="32" :placeholder="$L('必填')"></Input>
                 </FormItem>
                 <FormItem prop="desc" :label="$L('项目介绍')">
-                    <Input type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" v-model="settingData.desc" :maxlength="255" :placeholder="$L('选填')"></Input>
+                    <Input ref="projectDesc" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" v-model="settingData.desc" :maxlength="255" :placeholder="$L('选填')"></Input>
                 </FormItem>
             </Form>
             <div slot="footer" class="adaption">
@@ -1183,7 +1184,8 @@ export default {
                     this.$set(this.settingData, 'desc', this.projectData.desc);
                     this.settingShow = true;
                     this.$nextTick(() => {
-                        this.$refs.projectName.focus();
+                        this.$refs.projectName.focus()
+                        setTimeout(this.$refs.projectDesc.resizeTextarea, 0)
                     });
                     break;
 

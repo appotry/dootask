@@ -13,6 +13,7 @@ use Request;
  * App\Models\File
  *
  * @property int $id
+ * @property string|null $pids 上级ID递归
  * @property int|null $pid 上级ID
  * @property int|null $cid 复制ID
  * @property string|null $name 名称
@@ -37,6 +38,7 @@ use Request;
  * @method static \Illuminate\Database\Eloquent\Builder|File whereId($value)
  * @method static \Illuminate\Database\Eloquent\Builder|File whereName($value)
  * @method static \Illuminate\Database\Eloquent\Builder|File wherePid($value)
+ * @method static \Illuminate\Database\Eloquent\Builder|File wherePids($value)
  * @method static \Illuminate\Database\Eloquent\Builder|File whereShare($value)
  * @method static \Illuminate\Database\Eloquent\Builder|File whereSize($value)
  * @method static \Illuminate\Database\Eloquent\Builder|File whereType($value)
@@ -56,7 +58,7 @@ class File extends AbstractModel
     const codeExt = [
         'txt',
         'htaccess', 'htgroups', 'htpasswd', 'conf', 'bat', 'cmd', 'cpp', 'c', 'cc', 'cxx', 'h', 'hh', 'hpp', 'ino', 'cs', 'css',
-        'dockerfile', 'go', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
+        'dockerfile', 'go', 'golang', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
         'ocamlmakefile', 'make', 'mysql', 'nginx', 'ini', 'cfg', 'prefs', 'm', 'mm', 'pl', 'pm', 'p6', 'pl6', 'pm6', 'pgsql', 'php',
         'inc', 'phtml', 'shtml', 'php3', 'php4', 'php5', 'phps', 'phpt', 'aw', 'ctp', 'module', 'ps1', 'py', 'r', 'rb', 'ru', 'gemspec', 'rake', 'guardfile', 'rakefile',
         'gemfile', 'rs', 'sass', 'scss', 'sh', 'bash', 'bashrc', 'sql', 'sqlserver', 'swift', 'ts', 'typescript', 'str', 'vbs', 'vb', 'v', 'vh', 'sv', 'svh', 'xml',
@@ -71,6 +73,13 @@ class File extends AbstractModel
         'doc', 'docx',
         'xls', 'xlsx',
         'ppt', 'pptx',
+    ];
+
+    /**
+     * 图片文件
+     */
+    const imageExt = [
+        'jpg', 'jpeg', 'png', 'gif', 'bmp'
     ];
 
     /**
@@ -156,7 +165,7 @@ class File extends AbstractModel
      * @param $share
      * @return bool
      */
-    public function setShare($share = null)
+    public function updataShare($share = null)
     {
         if ($share === null) {
             $share = FileUser::whereFileId($this->id)->count() == 0 ? 0 : 1;
@@ -165,11 +174,48 @@ class File extends AbstractModel
             AbstractModel::transaction(function () use ($share) {
                 $this->share = $share;
                 $this->save();
+                if ($share === 0) {
+                    FileUser::deleteFileAll($this->id, $this->userid);
+                }
                 $list = self::wherePid($this->id)->get();
                 if ($list->isNotEmpty()) {
                     foreach ($list as $item) {
-                        $item->setShare(0);
+                        $item->updataShare(0);
                     }
+                }
+            });
+        }
+        return true;
+    }
+
+    /**
+     * 保存前更新pids
+     * @return bool
+     */
+    public function saveBeforePids()
+    {
+        $pid = $this->pid;
+        $array = [];
+        while ($pid > 0) {
+            $array[] = $pid;
+            $pid = intval(self::whereId($pid)->value('pid'));
+        }
+        $opids = $this->pids;
+        if ($array) {
+            $array = array_values(array_reverse($array));
+            $this->pids = ',' . implode(',', $array) . ',';
+        } else {
+            $this->pids = '';
+        }
+        if (!$this->save()) {
+            return false;
+        }
+        // 更新子文件（夹）
+        if ($opids != $this->pids) {
+            self::wherePid($this->id)->chunkById(100, function ($lists) {
+                /** @var self $item */
+                foreach ($lists as $item) {
+                    $item->saveBeforePids();
                 }
             });
         }
@@ -185,8 +231,7 @@ class File extends AbstractModel
         AbstractModel::transaction(function () {
             $this->delete();
             $this->pushMsg('delete');
-            FileLink::whereFileId($this->id)->delete();
-            FileUser::whereFileId($this->id)->delete();
+            FileUser::deleteFileAll($this->id);
             FileContent::whereFid($this->id)->delete();
             $list = self::wherePid($this->id)->get();
             if ($list->isNotEmpty()) {
@@ -248,6 +293,21 @@ class File extends AbstractModel
     }
 
     /**
+     * 处理返回图片地址
+     * @param $item
+     * @return void
+     */
+    public static function handleImageUrl(&$item)
+    {
+        if (in_array($item['ext'], self::imageExt) ) {
+            $content = Base::json2array(FileContent::whereFid($item['id'])->orderByDesc('id')->value('content'));
+            if ($content) {
+                $item['image_url'] = Base::fillUrl($content['url']);
+            }
+        }
+    }
+
+    /**
      * 获取文件并检测权限
      * @param $id
      * @param int $limit 要求权限: 0-访问权限、1-读写权限、1000-所有者或创建者
@@ -265,8 +325,8 @@ class File extends AbstractModel
         if ($permission < $limit) {
             $msg = match ($limit) {
                 1000 => '仅限所有者或创建者操作',
-                1 => '没有读写权限',
-                default => '没有访问权限',
+                1 => '没有修改写入权限',
+                default => '没有查看访问权限',
             };
             throw new ApiException($msg);
         }

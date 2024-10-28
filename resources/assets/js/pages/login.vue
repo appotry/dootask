@@ -31,13 +31,13 @@
                 </div>
             </div>
             <div class="login-bottom">
-                <Dropdown trigger="click" placement="top-start">
+                <Dropdown trigger="click" placement="bottom-start">
                     <div class="login-setting">
                         {{$L('设置')}}
                         <i class="taskfont">&#xe689;</i>
                     </div>
                     <DropdownMenu slot="list" class="login-setting-menu">
-                        <Dropdown placement="right-end" @on-click="setTheme">
+                        <Dropdown placement="right-start" transfer @on-click="setTheme">
                             <DropdownItem>
                                 <div class="login-setting-item">
                                     {{$L('主题皮肤')}}
@@ -52,7 +52,7 @@
                                     :selected="themeMode === item.value">{{$L(item.name)}}</DropdownItem>
                             </DropdownMenu>
                         </Dropdown>
-                        <Dropdown placement="right-end" @on-click="setLanguage">
+                        <Dropdown placement="right-start" transfer @on-click="setLanguage">
                             <DropdownItem divided>
                                 <div class="login-setting-item">
                                     {{currentLanguage}}
@@ -85,7 +85,7 @@ export default {
             loadIng: 0,
 
             codeNeed: false,
-            codeUrl: $A.apiUrl('users/login/codeimg'),
+            codeUrl: $A.apiUrl('users/login/codeimg?_=' + Math.random()),
 
             loginType: 'login',
             loginJump: false,
@@ -125,6 +125,10 @@ export default {
     },
     activated() {
         this.loginType = 'login'
+        //
+        if (this.$Electron) {
+            this.$Electron.sendMessage('subWindowDestroyAll')
+        }
     },
     deactivated() {
         this.loginJump = false;
@@ -348,6 +352,7 @@ export default {
                     },
                 }).then(({data}) => {
                     this.loadIng--;
+                    this.codeNeed = false;
                     $A.setStorage("cacheLoginEmail", this.email)
                     this.$store.dispatch("handleClearCache", data).then(() => {
                         this.goNext1();
@@ -394,7 +399,7 @@ export default {
             if (fromUrl) {
                 window.location.replace(fromUrl);
             } else {
-                this.goForward({path: '/manage/dashboard'}, true);
+                this.goForward({name: 'manage-dashboard'}, true);
             }
         }
     }

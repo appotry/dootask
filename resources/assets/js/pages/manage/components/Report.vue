@@ -13,14 +13,14 @@
             placement="right"
             :size="950"
             transfer>
-            <ReportDetail :data="detailData"/>
+            <ReportDetail v-if="showDetailDrawer" :data="detailData"/>
         </DrawerOverlay>
         <DrawerOverlay
             v-model="showEditDrawer"
             placement="right"
             :size="1000"
             transfer>
-            <ReportEdit :id="reportId" @saveSuccess="saveSuccess"/>
+            <ReportEdit v-if="showEditDrawer" :id="reportId" @saveSuccess="saveSuccess"/>
         </DrawerOverlay>
     </div>
 </template>
@@ -111,7 +111,6 @@ export default {
         },
 
         onEditReport(id) {
-            this.reportId = id;
             if (this.$Electron) {
                 let config = {
                     title: this.$L(id > 0 ? '修改报告' : '新增报告'),
@@ -126,6 +125,7 @@ export default {
                     config
                 });
             } else {
+                this.reportId = id;
                 this.showEditDrawer = true;
             }
         },

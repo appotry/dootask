@@ -23,7 +23,7 @@
 
             <div class="file-navigator">
                 <ul>
-                    <li @click="[pid=0,searchKey='']">{{$L('全部文件')}}</li>
+                    <li @click="backHomeDirectory">{{$L('全部文件')}}</li>
                     <li v-if="searchKey">{{$L('搜索')}} "{{searchKey}}"</li>
                     <li v-else v-for="item in navigator" @click="pid=item.id">
                         <i v-if="item.share" class="taskfont">&#xe63f;</i>
@@ -51,9 +51,9 @@
                 </template>
                 <div v-if="loadIng > 0" class="nav-load"><Loading/></div>
                 <div class="flex-full"></div>
-                <div :class="['switch-button', tableMode ? 'table' : '']" @click="tableMode=!tableMode">
-                    <div><i class="taskfont">&#xe60c;</i></div>
-                    <div><i class="taskfont">&#xe66a;</i></div>
+                <div :class="['switch-button', tableMode]">
+                    <div @click="tableMode='table'"><i class="taskfont">&#xe66a;</i></div>
+                    <div @click="tableMode='block'"><i class="taskfont">&#xe60c;</i></div>
                 </div>
             </div>
 
@@ -62,22 +62,7 @@
                 @drop.prevent="filePasteDrag($event, 'drag')"
                 @dragover.prevent="fileDragOver(true, $event)"
                 @dragleave.prevent="fileDragOver(false, $event)">
-                <div v-if="tableMode" class="file-table" @contextmenu.prevent="handleRightClick">
-                    <Table
-                        :columns="columns"
-                        :data="fileList"
-                        :height="tableHeight"
-                        :no-data-text="$L('没有任何文件')"
-                        @on-cell-click="clickRow"
-                        @on-contextmenu="handleContextMenu"
-                        @on-select="handleTableSelect"
-                        @on-select-cancel="handleTableSelect"
-                        @on-select-all-cancel="handleTableSelect"
-                        @on-select-all="handleTableSelect"
-                        context-menu
-                        stripe/>
-                </div>
-                <template v-else>
+                <template v-if="tableMode === 'block'">
                     <div v-if="fileList.length == 0 && loadIng == 0" class="file-no" @contextmenu.prevent="handleRightClick">
                         <i class="taskfont">&#xe60b;</i>
                         <p>{{$L('没有任何文件')}}</p>
@@ -129,6 +114,21 @@
                         </ul>
                     </div>
                 </template>
+                <div v-else class="file-table" @contextmenu.prevent="handleRightClick">
+                    <Table
+                        :columns="columns"
+                        :data="fileList"
+                        :height="tableHeight"
+                        :no-data-text="$L('没有任何文件')"
+                        @on-cell-click="clickRow"
+                        @on-contextmenu="handleContextMenu"
+                        @on-select="handleTableSelect"
+                        @on-select-cancel="handleTableSelect"
+                        @on-select-all-cancel="handleTableSelect"
+                        @on-select-all="handleTableSelect"
+                        context-menu
+                        stripe/>
+                </div>
                 <div v-if="dialogDrag" class="drag-over" @click="dialogDrag=false">
                     <div class="drag-text">{{$L('拖动到这里发送')}}</div>
                 </div>
@@ -146,6 +146,7 @@
                         <template v-if="contextMenuItem.id">
                             <DropdownItem @click.native="handleContextClick('open')">{{$L('打开')}}</DropdownItem>
                             <DropdownItem @click.native="handleContextClick('select')">{{$L(selectIds.includes(contextMenuItem.id) ? '取消选择' : '选择')}}</DropdownItem>
+
                             <Dropdown placement="right-start" transfer>
                                 <DropdownItem divided>
                                     <div class="arrow-forward-item">{{$L('新建')}}<Icon type="ios-arrow-forward"></Icon></div>
@@ -161,17 +162,16 @@
                                     </DropdownItem>
                                 </DropdownMenu>
                             </Dropdown>
+
                             <DropdownItem @click.native="handleContextClick('rename')" divided>{{$L('重命名')}}</DropdownItem>
                             <DropdownItem @click.native="handleContextClick('copy')" :disabled="contextMenuItem.type == 'folder'">{{$L('复制')}}</DropdownItem>
                             <DropdownItem @click.native="handleContextClick('shear')" :disabled="contextMenuItem.userid != userId">{{$L('剪切')}}</DropdownItem>
-                            <template v-if="contextMenuItem.userid == userId">
-                                <DropdownItem @click.native="handleContextClick('share')" divided>{{$L('共享')}}</DropdownItem>
-                                <DropdownItem @click.native="handleContextClick('link')" :disabled="contextMenuItem.type == 'folder'">{{$L('链接')}}</DropdownItem>
-                            </template>
-                            <template v-else-if="contextMenuItem.share">
-                                <DropdownItem @click.native="handleContextClick('outshare')" divided>{{$L('退出共享')}}</DropdownItem>
-                            </template>
+
+                            <DropdownItem v-if="contextMenuItem.userid == userId" @click.native="handleContextClick('share')" divided>{{$L('共享')}}</DropdownItem>
+                            <DropdownItem v-else-if="contextMenuItem.share" @click.native="handleContextClick('outshare')" divided>{{$L('退出共享')}}</DropdownItem>
+                            <DropdownItem @click.native="handleContextClick('link')" :divided="contextMenuItem.userid != userId && !contextMenuItem.share" :disabled="contextMenuItem.type == 'folder'">{{$L('链接')}}</DropdownItem>
                             <DropdownItem @click.native="handleContextClick('download')" :disabled="contextMenuItem.ext == ''">{{$L('下载')}}</DropdownItem>
+
                             <DropdownItem @click.native="handleContextClick('delete')" divided style="color:red">{{$L('删除')}}</DropdownItem>
                         </template>
                         <template v-else>
@@ -337,7 +337,7 @@
             v-model="pasteShow"
             :title="$L(pasteTitle)"
             :cancel-text="$L('取消')"
-            :ok-text="$L('发送')"
+            :ok-text="$L('立即上传')"
             :enter-ok="true"
             @on-ok="pasteSend">
             <div class="dialog-wrapper-paste">
@@ -426,7 +426,7 @@ export default {
             ],
 
             tableHeight: 500,
-            tableMode: $A.getStorageBoolean("fileTableMode"),
+            tableMode: $A.getStorageString("fileTableMode"),
             columns: [],
 
             shareShow: false,
@@ -450,15 +450,15 @@ export default {
                 'drawio',
                 'mind',
                 'docx', 'wps', 'doc', 'xls', 'xlsx', 'ppt', 'pptx',
-                'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw',
-                'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z',
+                'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw', 'svg',
+                'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z', 'gz', 'apk', 'dmg',
                 'tif', 'tiff',
                 'dwg', 'dxf',
                 'ofd',
                 'pdf',
                 'txt',
                 'htaccess', 'htgroups', 'htpasswd', 'conf', 'bat', 'cmd', 'cpp', 'c', 'cc', 'cxx', 'h', 'hh', 'hpp', 'ino', 'cs', 'css',
-                'dockerfile', 'go', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
+                'dockerfile', 'go', 'golang', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
                 'ocamlmakefile', 'make', 'mysql', 'nginx', 'ini', 'cfg', 'prefs', 'm', 'mm', 'pl', 'pm', 'p6', 'pl6', 'pm6', 'pgsql', 'php',
                 'inc', 'phtml', 'shtml', 'php3', 'php4', 'php5', 'phps', 'phpt', 'aw', 'ctp', 'module', 'ps1', 'py', 'r', 'rb', 'ru', 'gemspec', 'rake', 'guardfile', 'rakefile',
                 'gemfile', 'rs', 'sass', 'scss', 'sh', 'bash', 'bashrc', 'sql', 'sqlserver', 'swift', 'ts', 'typescript', 'str', 'vbs', 'vb', 'v', 'vh', 'sv', 'svh', 'xml',
@@ -470,7 +470,7 @@ export default {
                 'rp',
             ],
             uploadAccept: '',
-            maxSize: 204800,
+            maxSize: 1024000,
 
             contextMenuItem: {},
             contextMenuVisible: false,
@@ -722,11 +722,6 @@ export default {
                                             size: 20
                                         },
                                     }))
-                                    if (row.permission == 0) {
-                                        iconArray.push(h('span', {
-                                            class: 'permission',
-                                        }, this.$L('只读')))
-                                    }
                                 } else {
                                     iconArray.push(h('i', {
                                         class: 'taskfont',
@@ -819,14 +814,24 @@ export default {
             return name;
         },
 
+        backHomeDirectory() {
+            this.pid = 0
+            this.searchKey = ''
+        },
+
         getFileList() {
             this.loadIng++;
             this.$store.dispatch("getFiles", this.pid).then(() => {
                 this.loadIng--;
                 $A.setStorage("fileOpenPid", this.pid)
             }).catch(({msg}) => {
-                $A.modalError(msg);
                 this.loadIng--;
+                $A.modalError({
+                    content: msg,
+                    onOk: () => {
+                        this.backHomeDirectory();
+                    }
+                });
             });
         },
 
@@ -885,12 +890,23 @@ export default {
                 this.searchKey = '';
                 this.pid = item.id;
             } else {
+                // 图片直接浏览
+                if (item.image_url) {
+                    const list = this.fileList.filter(({image_url}) => !!image_url)
+                    if (list.length > 0) {
+                        this.$store.state.previewImageIndex = list.findIndex(({id}) => item.id === id);
+                        this.$store.state.previewImageList = list.map(item => item.image_url);
+                        return;
+                    }
+                }
+                // 客户端打开独立窗口
                 if (this.$Electron) {
                     this.openSingle(item);
-                } else {
-                    this.fileInfo = item;
-                    this.fileShow = true;
+                    return;
                 }
+                // 正常显示弹窗
+                this.fileInfo = item;
+                this.fileShow = true;
             }
         },
 
@@ -1035,7 +1051,7 @@ export default {
                         content: `${item.name}.${item.ext} (${$A.bytesToSize(item.size)})`,
                         okText: '立即下载',
                         onOk: () => {
-                            $A.downFile($A.apiUrl(`file/content?id=${item.id}&down=yes&token=${this.userToken}`))
+                            this.$store.dispatch('downUrl', $A.apiUrl(`file/content?id=${item.id}&down=yes`))
                         }
                     });
                     break;
@@ -1272,7 +1288,7 @@ export default {
             })
         },
 
-        onShare() {
+        onShare(force = false) {
             if (this.shareInfo.userids.length == 0) {
                 $A.messageWarning("请选择共享成员")
                 return;
@@ -1280,20 +1296,31 @@ export default {
             this.shareLoad++;
             this.$store.dispatch("call", {
                 url: 'file/share/update',
-                data: this.shareInfo,
+                data: Object.assign(this.shareInfo, {
+                    force: force === true ? 1 : 0
+                }),
             }).then(({data, msg}) => {
                 this.shareLoad--;
                 $A.messageSuccess(msg)
                 this.$store.dispatch("saveFile", data);
                 this.$set(this.shareInfo, 'userids', []);
                 this.getShare();
-            }).catch(({msg}) => {
+            }).catch(({ret, msg}) => {
                 this.shareLoad--;
-                $A.modalError(msg)
+                if (ret === -3001) {
+                    $A.modalConfirm({
+                        content: '此文件夹内已有共享文件夹，子文件的共享状态将被取消，是否继续？',
+                        onOk: () => {
+                            this.onShare(true)
+                        }
+                    })
+                } else {
+                    $A.modalError(msg, force === true ? 301 : 0)
+                }
             })
         },
 
-        upShare(item) {
+        upShare(item, force = false) {
             if (item.loading === true) {
                 return;
             }
@@ -1305,6 +1332,7 @@ export default {
                     id: this.shareInfo.id,
                     userids: [item.userid],
                     permission: item.permission,
+                    force: force === true ? 1 : 0
                 },
             }).then(({data, msg}) => {
                 item.loading = false;
@@ -1317,10 +1345,22 @@ export default {
                         this.shareList.splice(index, 1)
                     }
                 }
-            }).catch(({msg}) => {
+            }).catch(({ret, msg}) => {
                 item.loading = false;
-                item.permission = item._permission;
-                $A.modalError(msg)
+                if (ret === -3001) {
+                    $A.modalConfirm({
+                        content: '此文件夹内已有共享文件夹，子文件的共享状态将被取消，是否继续？',
+                        onOk: () => {
+                            this.upShare(item, true)
+                        },
+                        onCancel: () => {
+                            item.permission = item._permission;
+                        }
+                    })
+                } else {
+                    item.permission = item._permission;
+                    $A.modalError(msg, force === true ? 301 : 0)
+                }
             })
         },
 

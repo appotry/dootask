@@ -35,7 +35,7 @@ export default {
             params.success = (result, status, xhr) => {
                 if (!$A.isJson(result)) {
                     console.log(result, status, xhr);
-                    reject({data: {}, msg: "Return error"})
+                    reject({ret: -1, data: {}, msg: "Return error"})
                     return;
                 }
                 const {ret, data, msg} = result;
@@ -56,14 +56,14 @@ export default {
                             checkNick: false
                         })).then(resolve).catch(reject);
                     }).catch(() => {
-                        reject({data, msg: $A.L('请设置昵称！')})
+                        reject({ret: -1, data, msg: $A.L('请设置昵称！')})
                     });
                     return;
                 }
                 if (ret === 1) {
                     resolve({data, msg});
                 } else {
-                    reject({data, msg: msg || "Unknown error"})
+                    reject({ret, data, msg: msg || "Unknown error"})
                     //
                     if (ret === -4001) {
                         dispatch("forgetProject", data.project_id);
@@ -76,9 +76,9 @@ export default {
             };
             params.error = (xhr, status) => {
                 if (window.navigator.onLine === false || (status === 0 && xhr.readyState === 4)) {
-                    reject({data: {}, msg: $A.L('网络异常，请稍后再试！')})
+                    reject({ret: -1, data: {}, msg: $A.L('网络异常，请稍后再试！')})
                 } else {
-                    reject({data: {}, msg: "System error"})
+                    reject({ret: -1, data: {}, msg: "System error"})
                 }
             };
             //
@@ -137,6 +137,35 @@ export default {
             }
             $A.ajaxc(params);
         })
+    },
+
+    /**
+     * 下载文件
+     * @param state
+     * @param data
+     */
+    downUrl({state}, data) {
+        if (!data) {
+            return
+        }
+        let url = data;
+        let params = {
+            token: state.userToken
+        };
+        if ($A.isJson(data)) {
+            url = data.url;
+            params = data.params || {};
+        }
+        url = $A.urlAddParams(url, params);
+        if ($A.Electron) {
+            $A.Electron.request({action: 'openExternal', url}, () => {
+                // 成功
+            }, () => {
+                // 失败
+            });
+        } else {
+            window.open(url)
+        }
     },
 
     /**
@@ -248,7 +277,6 @@ export default {
             state.userIsAdmin = $A.inArray('admin', userInfo.identity);
             $A.setStorage("userInfo", state.userInfo);
             dispatch("getBasicData");
-            dispatch("websocketConnection");
             resolve()
         });
     },
@@ -618,7 +646,7 @@ export default {
             if (project) {
                 $A.goForward({path: '/manage/project/' + project.id});
             } else {
-                $A.goForward({path: '/manage/dashboard'});
+                $A.goForward({name: 'manage-dashboard'});
             }
         }
         setTimeout(() => {
@@ -1996,42 +2024,52 @@ export default {
      * @param state
      * @param dispatch
      * @param dialog_id
+     * @returns {Promise<unknown>}
      */
     getDialogMsgs({state, dispatch}, dialog_id) {
-        let dialog = state.cacheDialogs.find(({id}) => id == dialog_id);
-        if (!dialog) {
-            dialog = {
-                id: dialog_id,
-            };
-            state.cacheDialogs.push(dialog);
-        }
-        if (dialog.loading) {
-            return;
-        }
-        dialog.loading = true;
-        dialog.currentPage = 1;
-        dialog.hasMorePages = false;
-        //
-        dispatch("call", {
-            url: 'dialog/msg/lists',
-            data: {
-                dialog_id: dialog_id,
-                page: dialog.currentPage
-            },
-        }).then(result => {
-            dialog.loading = false;
-            dialog.currentPage = result.data.current_page;
-            dialog.hasMorePages = !!result.data.next_page_url;
-            dispatch("saveDialog", dialog);
+        return new Promise(resolve => {
+            if (!dialog_id) {
+                resolve()
+                return;
+            }
+            let dialog = state.cacheDialogs.find(({id}) => id == dialog_id);
+            if (!dialog) {
+                dialog = {
+                    id: dialog_id,
+                };
+                state.cacheDialogs.push(dialog);
+            }
+            if (dialog.loading) {
+                resolve()
+                return;
+            }
+            dialog.loading = true;
+            dialog.currentPage = 1;
+            dialog.hasMorePages = false;
             //
-            const ids = result.data.data.map(({id}) => id)
-            state.dialogMsgs = state.dialogMsgs.filter((item) => item.dialog_id != dialog_id || ids.includes(item.id));
-            //
-            dispatch("saveDialog", result.data.dialog);
-            dispatch("saveDialogMsg", result.data.data);
-        }).catch(e => {
-            console.warn(e);
-            dialog.loading = false;
+            dispatch("call", {
+                url: 'dialog/msg/lists',
+                data: {
+                    dialog_id: dialog_id,
+                    page: dialog.currentPage
+                },
+            }).then(result => {
+                dialog.loading = false;
+                dialog.currentPage = result.data.current_page;
+                dialog.hasMorePages = !!result.data.next_page_url;
+                dispatch("saveDialog", dialog);
+                //
+                const ids = result.data.data.map(({id}) => id)
+                state.dialogMsgs = state.dialogMsgs.filter((item) => item.dialog_id != dialog_id || ids.includes(item.id));
+                //
+                dispatch("saveDialog", result.data.dialog);
+                dispatch("saveDialogMsg", result.data.data);
+                resolve()
+            }).catch(e => {
+                console.warn(e);
+                dialog.loading = false;
+                resolve()
+            });
         });
     },
 
@@ -2131,6 +2169,9 @@ export default {
         url = url.replace("http://", "ws://");
         url += "?action=web&token=" + state.userToken;
         //
+        const wsRandom = $A.randomString(16);
+        state.wsRandom = wsRandom;
+        //
         state.ws = new WebSocket(url);
         state.ws.onopen = (e) => {
             // console.log("[WS] Open", $A.formatDate())
@@ -2142,7 +2183,7 @@ export default {
             //
             clearTimeout(state.wsTimeout);
             state.wsTimeout = setTimeout(() => {
-                dispatch('websocketConnection');
+                wsRandom === state.wsRandom && dispatch('websocketConnection');
             }, 3000);
         };
         state.ws.onerror = (e) => {
@@ -2151,7 +2192,7 @@ export default {
             //
             clearTimeout(state.wsTimeout);
             state.wsTimeout = setTimeout(() => {
-                dispatch('websocketConnection');
+                wsRandom === state.wsRandom && dispatch('websocketConnection');
             }, 3000);
         };
         state.ws.onmessage = (e) => {
@@ -2414,6 +2455,9 @@ export default {
      * @param state
      */
     websocketClose({state}) {
-        state.ws && state.ws.close();
+        if (state.ws) {
+            state.ws.close();
+            state.ws = null;
+        }
     }
 }

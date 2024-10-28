@@ -24,8 +24,8 @@
                         <Select v-model="keys.identity" :placeholder="$L('请选择')">
                             <Option value="">{{$L('全部')}}</Option>
                             <Option value="admin">{{$L('管理员')}}</Option>
-                            <Option value="disable">{{$L('禁用')}}</Option>
                             <Option value="noadmin">{{$L('非管理员')}}</Option>
+                            <Option value="disable">{{$L('禁用')}}</Option>
                             <Option value="nodisable">{{$L('非禁用')}}</Option>
                         </Select>
                     </div>
@@ -50,7 +50,8 @@
                         transfer>
                         <Button :loading="loadIng > 0" type="primary" icon="ios-search" @click="onSearch">{{$L('搜索')}}</Button>
                         <div slot="content">
-                            <Button :loading="loadIng > 0" type="text" @click="getLists">{{$L('刷新')}}</Button>
+                            <Button v-if="keyIs" type="text" @click="keyIs=false">{{$L('取消筛选')}}</Button>
+                            <Button v-else :loading="loadIng > 0" type="text" @click="getLists">{{$L('刷新')}}</Button>
                         </div>
                     </Tooltip>
                 </li>
@@ -88,7 +89,10 @@ export default {
         return {
             loadIng: 0,
 
-            keys: {},
+            keys: {
+                identity: 'nodisable'
+            },
+            keyIs: false,
 
             columns: [],
             list: [],
@@ -104,6 +108,14 @@ export default {
     },
     computed: {
         ...mapState(['windowMax768'])
+    },
+    watch: {
+        keyIs(v) {
+            if (!v) {
+                this.keys = {}
+                this.setPage(1)
+            }
+        }
     },
     methods: {
         initLanguage() {
@@ -133,7 +145,7 @@ export default {
                         if (email_verity) {
                             arr.push(h('Icon', {
                                 props: {
-                                    type: 'md-checkmark'
+                                    type: 'md-mail'
                                 }
                             }))
                         }
@@ -286,18 +298,21 @@ export default {
                 }
             ]
         },
+
         onSearch() {
             this.page = 1;
             this.getLists();
         },
+
         getLists() {
             this.loadIng++;
+            this.keyIs = $A.objImplode(this.keys) != "";
             this.$store.dispatch("call", {
                 url: 'users/lists',
                 data: {
                     keys: this.keys,
                     page: Math.max(this.page, 1),
-                    pagesize: Math.max($A.runNum(this.pageSize), 20),
+                    pagesize: Math.max($A.runNum(this.pageSize), 10),
                 },
             }).then(({data}) => {
                 this.loadIng--;

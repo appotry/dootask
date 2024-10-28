@@ -90,6 +90,10 @@ class FileController extends AbstractController
                 }
             }
         }
+        // 图片直接返回预览地址
+        foreach ($array as &$item) {
+            File::handleImageUrl($item);
+        }
         return Base::retSuccess('success', $array);
     }
 
@@ -252,7 +256,7 @@ class FileController extends AbstractController
                 'userid' => $userid,
                 'created_id' => $user->userid,
             ]);
-            $file->save();
+            $file->saveBeforePids();
             //
             $data = File::find($file->id);
             $data->pushMsg('add', $data);
@@ -305,7 +309,7 @@ class FileController extends AbstractController
         $data = AbstractModel::transaction(function() use ($file) {
             $content = FileContent::select(['content', 'text', 'size'])->whereFid($file->cid)->orderByDesc('id')->first();
             $file->size = $content?->size ?: 0;
-            $file->save();
+            $file->saveBeforePids();
             if ($content) {
                 $content = $content->toArray();
                 $content['fid'] = $file->id;
@@ -336,7 +340,7 @@ class FileController extends AbstractController
      */
     public function move()
     {
-        $user = User::auth();
+        User::auth();
         //
         $ids = Request::input('ids');
         $pid = intval(Request::input('pid'));
@@ -369,7 +373,7 @@ class FileController extends AbstractController
                 }
                 //
                 $file->pid = $pid;
-                $file->save();
+                $file->saveBeforePids();
                 $files[] = $file;
             }
         });
@@ -666,7 +670,7 @@ class FileController extends AbstractController
                             'userid' => $userid,
                             'created_id' => $user->userid,
                         ]);
-                        if ($dirRow->save()) {
+                        if ($dirRow->saveBeforePids()) {
                             $pushMsg[] = File::find($dirRow->id);
                         }
                     }
@@ -701,15 +705,15 @@ class FileController extends AbstractController
             'xls', 'xlsx' => "excel",
             'ppt', 'pptx' => "ppt",
             'wps' => "wps",
-            'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw' => "picture",
-            'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z' => "archive",
+            'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw', 'svg' => "picture",
+            'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z', 'gz', 'apk', 'dmg' => "archive",
             'tif', 'tiff' => "tif",
             'dwg', 'dxf' => "cad",
             'ofd' => "ofd",
             'pdf' => "pdf",
             'txt' => "txt",
             'htaccess', 'htgroups', 'htpasswd', 'conf', 'bat', 'cmd', 'cpp', 'c', 'cc', 'cxx', 'h', 'hh', 'hpp', 'ino', 'cs', 'css',
-            'dockerfile', 'go', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
+            'dockerfile', 'go', 'golang', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
             'ocamlmakefile', 'make', 'mysql', 'nginx', 'ini', 'cfg', 'prefs', 'm', 'mm', 'pl', 'pm', 'p6', 'pl6', 'pm6', 'pgsql', 'php',
             'inc', 'phtml', 'shtml', 'php3', 'php4', 'php5', 'phps', 'phpt', 'aw', 'ctp', 'module', 'ps1', 'py', 'r', 'rb', 'ru', 'gemspec', 'rake', 'guardfile', 'rakefile',
             'gemfile', 'rs', 'sass', 'scss', 'sh', 'bash', 'bashrc', 'sql', 'sqlserver', 'swift', 'ts', 'typescript', 'str', 'vbs', 'vb', 'v', 'vh', 'sv', 'svh', 'xml',
@@ -735,7 +739,7 @@ class FileController extends AbstractController
         // 开始创建
         return AbstractModel::transaction(function () use ($webkitRelativePath, $type, $user, $data, $file) {
             $file->size = $data['size'] * 1024;
-            $file->save();
+            $file->saveBeforePids();
             //
             $data = Base::uploadMove($data, "uploads/file/" . $file->type . "/" . date("Ym") . "/" . $file->id . "/");
             $content = FileContent::createInstance([
@@ -757,6 +761,7 @@ class FileController extends AbstractController
             //
             $data = $tmpRow->toArray();
             $data['full_name'] = $webkitRelativePath ?: $data['name'];
+            File::handleImageUrl($data);
             return Base::retSuccess($data['name'] . ' 上传成功', $data);
         });
     }
@@ -811,6 +816,9 @@ class FileController extends AbstractController
      * - 0：只读
      * - 1：读写
      * - -1: 删除
+     * @apiParam {Number} [force]       设置共享时是否忽略提醒
+     * - 0：如果子文件夹已存在共享则ret返回-3001（默认）
+     * - 1：忽略提醒
      *
      * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
      * @apiSuccess {String} msg     返回信息（错误描述）
@@ -823,6 +831,7 @@ class FileController extends AbstractController
         $id = intval(Request::input('id'));
         $userids = Request::input('userids');
         $permission = intval(Request::input('permission'));
+        $force = intval(Request::input('force'));
         //
         if (!in_array($permission, [-1, 0, 1])) {
             return Base::retError('参数错误');
@@ -849,16 +858,18 @@ class FileController extends AbstractController
             // 取消共享
             $action = "delete";
             foreach ($userids as $userid) {
-                if (FileUser::where([
-                    'file_id' => $file->id,
-                    'userid' => $userid,
-                ])->delete()) {
+                if (FileUser::deleteFileUser($file->id, $userid)) {
                     $array[] = $userid;
                 }
             }
         } else {
             // 设置共享
             $action = "update";
+            if ($force === 0) {
+                if (File::where("pids", "like", "%,{$file->id},%")->whereShare(1)->exists()) {
+                    return Base::retError('此文件夹内已有共享文件夹', [], -3001);
+                }
+            }
             if (FileUser::whereFileId($file->id)->count() + count($userids) > 100) {
                 return Base::retError('共享人数上限100个成员');
             }
@@ -874,7 +885,7 @@ class FileController extends AbstractController
             }
         }
         //
-        $file->setShare();
+        $file->updataShare();
         $file->pushMsg($action, $action == "delete" ? null : $file, $array);
         return Base::retSuccess($action == "delete" ? "删除成功" : "设置成功", $file);
     }
@@ -904,18 +915,12 @@ class FileController extends AbstractController
         if ($file->userid == $user->userid) {
             return Base::retError('不能退出自己共享的文件');
         }
-        if (FileUser::where([
-            'file_id' => $file->id,
-            'userid' => 0,
-        ])->exists()) {
+        if (FileUser::whereFileId($file->id)->whereUserid(0)->exists()) {
             return Base::retError('无法退出共享所有人的文件或文件夹');
         }
-        FileUser::where([
-            'file_id' => $file->id,
-            'userid' => $user->userid,
-        ])->delete();
+        FileUser::deleteFileUser($file->id, $user->userid);
         //
-        $file->setShare();
+        $file->updataShare();
         return Base::retSuccess("退出成功");
     }
 
@@ -938,20 +943,21 @@ class FileController extends AbstractController
      */
     public function link()
     {
-        User::auth();
+        $user = User::auth();
         //
         $id = intval(Request::input('id'));
         $refresh = Request::input('refresh', 'no');
         //
-        $file = File::permissionFind($id, 1000);
+        $file = File::permissionFind($id);
         if ($file->type == 'folder') {
             return Base::retError('文件夹暂不支持此功能');
         }
         //
-        $fileLink = FileLink::whereFileId($file->id)->first();
+        $fileLink = FileLink::whereFileId($file->id)->whereUserid($user->userid)->first();
         if (empty($fileLink)) {
             $fileLink = FileLink::createInstance([
                 'file_id' => $file->id,
+                'userid' => $user->userid,
                 'code' => Base::generatePassword(64),
             ]);
             $fileLink->save();

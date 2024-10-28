@@ -2,7 +2,7 @@
     <div v-show="userId > 0" class="page-manage">
         <div class="manage-box-menu" :class="{'show768-menu': show768Menu}">
             <Dropdown
-                class="manage-box-dropdown"
+                class="page-manage-menu-dropdown"
                 trigger="click"
                 @on-click="settingRoute"
                 @on-visible-change="menuVisibleChange">
@@ -23,6 +23,8 @@
                         <!--最近打开的任务-->
                         <Dropdown
                             v-if="item.path === 'taskBrowse'"
+                            transfer
+                            transfer-class-name="page-manage-menu-dropdown"
                             placement="right-start">
                             <DropdownItem>
                                 <div class="manage-menu-flex">
@@ -46,6 +48,8 @@
                         <!-- 团队管理 -->
                         <Dropdown
                             v-else-if="item.path === 'team'"
+                            transfer
+                            transfer-class-name="page-manage-menu-dropdown"
                             placement="right-start">
                             <DropdownItem divided>
                                 <div class="manage-menu-flex">
@@ -69,6 +73,8 @@
                         <Dropdown
                             v-else-if="item.path === 'theme'"
                             placement="right-start"
+                            transfer
+                            transfer-class-name="page-manage-menu-dropdown"
                             @on-click="setTheme">
                             <DropdownItem divided>
                                 <div class="manage-menu-flex">
@@ -88,6 +94,8 @@
                         <Dropdown
                             v-else-if="item.path === 'language'"
                             placement="right-start"
+                            transfer
+                            transfer-class-name="page-manage-menu-dropdown"
                             @on-click="setLanguage">
                             <DropdownItem divided>
                                 <div class="manage-menu-flex">
@@ -109,15 +117,17 @@
                             :divided="!!item.divided"
                             :name="item.path"
                             :style="item.style || {}">
-                            {{$L(item.name)}}
-                            <Badge
-                                v-if="item.path === 'version'"
-                                class="manage-menu-report-badge"
-                                :text="clientNewVersion"/>
-                            <Badge
-                                v-else-if="item.path === 'workReport' && reportUnreadNumber > 0"
-                                class="manage-menu-report-badge"
-                                :count="reportUnreadNumber"/>
+                            <div class="manage-menu-flex">
+                                {{$L(item.name)}}
+                                <Badge
+                                    v-if="item.path === 'version'"
+                                    class="manage-menu-report-badge"
+                                    :text="clientNewVersion"/>
+                                <Badge
+                                    v-else-if="item.path === 'workReport' && reportUnreadNumber > 0"
+                                    class="manage-menu-report-badge"
+                                    :count="reportUnreadNumber"/>
+                            </div>
                         </DropdownItem>
                     </template>
                 </DropdownMenu>
@@ -500,7 +510,11 @@ export default {
         },
 
         unreadTotal() {
-            return this.msgAllUnread + this.dashboardTask.overdue.length + this.reportUnreadNumber;
+            if (this.userId > 0) {
+                return this.msgAllUnread + this.dashboardTask.overdue.length + this.reportUnreadNumber
+            } else {
+                return 0
+            }
         },
 
         currentLanguage() {
@@ -658,6 +672,13 @@ export default {
             immediate: true
         },
 
+        userId: {
+            handler() {
+                this.$store.dispatch("websocketConnection")
+            },
+            immediate: true
+        },
+
         wsMsg: {
             handler(info) {
                 const {type, action} = info;
@@ -689,7 +710,7 @@ export default {
 
         chackPass() {
             if (this.userInfo.changepass === 1) {
-                this.goForward({path: '/manage/setting/password'});
+                this.goForward({name: 'manage-setting-password'});
             }
         },
 
@@ -727,7 +748,7 @@ export default {
                     this.workReportShow = true;
                     return;
                 case 'version':
-                    Store.set('releasesNotification', null);
+                    Store.set('updateNotification', null);
                     return;
                 case 'clearCache':
                     this.$store.dispatch("handleClearCache", null).then(() => {
@@ -963,7 +984,9 @@ export default {
             }).then(({data}) => {
                 this.exportLoadIng--;
                 this.exportTaskShow = false;
-                $A.downFile(data.url);
+                this.$store.dispatch('downUrl', {
+                    url: data.url
+                });
             }).catch(({msg}) => {
                 this.exportLoadIng--;
                 $A.modalError(msg);
@@ -984,7 +1007,7 @@ export default {
                             if (!$A.isJson(data)) {
                                 return;
                             }
-                            this.goForward({path: '/manage/messenger'});
+                            this.goForward({name: 'manage-messenger'});
                             if (data.dialog_id) {
                                 $A.setStorage("messenger::dialogId", data.dialog_id)
                                 this.$store.state.dialogOpenId = data.dialog_id;

@@ -1,8 +1,8 @@
 const fs = require('fs')
-const fse = require('fs-extra')
 const os = require("os");
 const path = require('path')
-const {app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell} = require('electron')
+const {app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Tray, Menu} = require('electron')
+const {autoUpdater} = require("electron-updater")
 const log = require("electron-log");
 const fsProm = require('fs/promises');
 const PDFDocument = require('pdf-lib').PDFDocument;
@@ -12,56 +12,19 @@ const utils = require('./utils');
 const config = require('./package.json');
 
 let mainWindow = null,
+    mainTray = null,
     subWindow = [],
     willQuitApp = false,
     devloadUrl = "",
-    devloadCachePath = path.resolve(__dirname, ".devload"),
-    downloadList = [],
-    downloadCacheFile = path.join(app.getPath('cache'), config.name, '.downloadCache');
+    devloadCachePath = path.resolve(__dirname, ".devload");
 
 if (fs.existsSync(devloadCachePath)) {
     devloadUrl = fs.readFileSync(devloadCachePath, 'utf8')
 }
 
-if (fs.existsSync(downloadCacheFile)) {
-    downloadList = utils.jsonParse(fs.readFileSync(downloadCacheFile, 'utf8'), [])
-} else {
-    fse.ensureDirSync(path.join(app.getPath('cache'), config.name))
-}
-
-function downloadUpdate(item) {
-    const chain = item.getURLChain()
-    if (chain.length == 0) {
-        return
-    }
-    let currentState = item.getState()
-    if (currentState == "progressing" && item.isPaused()) {
-        currentState = "paused"
-    }
-    //
-    const downloadItem = downloadList.find(item => item.url == chain[0])
-    if (downloadItem && downloadItem.state != currentState) {
-        downloadItem.state = currentState;
-        downloadItem.result = {
-            url: item.getURL(),
-            name: item.getFilename(),
-            savePath: item.getSavePath(),
-            mimeType: item.getMimeType(),
-            totalBytes: item.getTotalBytes(),
-            chain,
-        };
-        fs.writeFileSync(downloadCacheFile, utils.jsonStringify(downloadList), 'utf8');
-        //
-        if (currentState == 'completed') {
-            mainWindow.webContents.send("downloadDone", downloadItem)
-            log.info("下载完成", downloadItem)
-        } else {
-            mainWindow.webContents.send("downloadUpdate", downloadItem)
-            log.info("下载更新", downloadItem)
-        }
-    }
-}
-
+/**
+ * 创建主窗口
+ */
 function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -79,11 +42,11 @@ function createMainWindow() {
     mainWindow.webContents.setUserAgent(mainWindow.webContents.getUserAgent() + " MainTaskWindow/" + process.platform + "/" + os.arch() + "/1.0");
 
     if (devloadUrl) {
-        mainWindow.loadURL(devloadUrl).then(r => {
+        mainWindow.loadURL(devloadUrl).then(_ => {
 
         })
     } else {
-        mainWindow.loadFile('./public/index.html').then(r => {
+        mainWindow.loadFile('./public/index.html').then(_ => {
 
         })
     }
@@ -96,22 +59,21 @@ function createMainWindow() {
 
     mainWindow.on('close', event => {
         if (!willQuitApp) {
-            utils.onBeforeUnload(event, app)
+            utils.onBeforeUnload(event).then(() => {
+                if (process.platform === 'win32') {
+                    mainWindow.hide()
+                } else if (process.platform === 'darwin') {
+                    app.hide()
+                } else {
+                    app.quit()
+                }
+            })
         }
-    })
-
-    mainWindow.webContents.session.on('will-download', (event, item) => {
-        item.setSavePath(path.join(app.getPath('cache'), config.name, item.getFilename()));
-        item.on('updated', () => {
-            downloadUpdate(item)
-        })
-        item.on('done', () => {
-            downloadUpdate(item)
-        })
     })
 }
 
 /**
+ * 创建子窗口
  * @param args {path, hash, title, titleFixed, force, userAgent, config, webPreferences}
  */
 function createSubWindow(args) {
@@ -156,7 +118,11 @@ function createSubWindow(args) {
         })
 
         browser.on('close', event => {
-            utils.onBeforeUnload(event)
+            if (!willQuitApp) {
+                utils.onBeforeUnload(event).then(() => {
+                    event.sender.destroy()
+                })
+            }
         })
 
         browser.on('closed', () => {
@@ -171,68 +137,65 @@ function createSubWindow(args) {
     browser.webContents.setUserAgent(browser.webContents.getUserAgent() + " SubTaskWindow/" + process.platform + "/" + os.arch() + "/1.0" + (args.userAgent ? (" " + args.userAgent) : ""));
 
     if (devloadUrl) {
-        browser.loadURL(devloadUrl + '#' + (args.hash || args.path)).then(r => {
+        browser.loadURL(devloadUrl + '#' + (args.hash || args.path)).then(_ => {
 
         })
     } else {
         browser.loadFile('./public/index.html', {
             hash: args.hash || args.path
-        }).then(r => {
+        }).then(_ => {
 
         })
     }
 }
 
-app.whenReady().then(() => {
-    createMainWindow()
-
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+const getTheLock = app.requestSingleInstanceLock()
+if (!getTheLock) {
+    app.quit()
+} else {
+    app.on('second-instance', () => {
+        utils.setShowWindow(mainWindow)
     })
+    app.on('ready', () => {
+        // 创建主窗口
+        createMainWindow()
+        // 创建托盘
+        if (['darwin', 'win32'].includes(process.platform) && utils.isJson(config.trayIcon)) {
+            mainTray = new Tray(path.join(__dirname, config.trayIcon[devloadUrl ? 'dev' : 'prod'][process.platform === 'darwin' ? 'mac' : 'win']));
+            mainTray.on('click', () => {
+                utils.setShowWindow(mainWindow)
+            })
+            mainTray.setToolTip(config.name)
+            if (process.platform === 'win32') {
+                const trayMenu = Menu.buildFromTemplate([{
+                    label: '显示',
+                    click: () => {
+                        utils.setShowWindow(mainWindow)
+                    }
+                }, {
+                    label: '退出',
+                    click: () => {
+                        app.quit()
+                    }
+                }])
+                mainTray.setContextMenu(trayMenu)
+            }
+        }
+    })
+}
+
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
 })
 
 app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
+    if (willQuitApp || process.platform !== 'darwin') {
         app.quit()
     }
 })
 
 app.on('before-quit', () => {
     willQuitApp = true
-})
-
-/**
- * 下载文件
- * @param args {url}
- */
-ipcMain.on('downloadFile', (event, args) => {
-    event.returnValue = "ok"
-    //
-    let appendJson = {state: "progressing", startTime: utils.Time()}
-    let downloadItem = downloadList.find(({url}) => url == args.url)
-    if (downloadItem) {
-        switch (downloadItem.state) {
-            case "completed":
-                if (fs.existsSync(downloadItem.result.savePath)) {  // 下载完成，文件存在
-                    log.info("下载已完成", downloadItem)
-                    mainWindow.webContents.send("downloadDone", downloadItem)
-                    return
-                }
-                break;
-            case "progressing":
-                if (downloadItem.startTime + 480 > utils.Time()) {  // 下载中，未超时（超时时间8分钟）
-                    log.info("下载已存在", downloadItem)
-                    return;
-                }
-                break;
-        }
-        downloadItem = Object.assign(downloadItem, appendJson)
-    } else {
-        downloadList.push(downloadItem = Object.assign(args, appendJson))
-    }
-    fs.writeFileSync(downloadCacheFile, utils.jsonStringify(downloadList), 'utf8');
-    mainWindow.webContents.downloadURL(downloadItem.url);
-    log.info("下载开始", downloadItem)
 })
 
 /**
@@ -262,10 +225,10 @@ ipcMain.on('windowRouter', (event, args) => {
 })
 
 /**
- * 隐藏窗口（mac隐藏，其他关闭）
+ * 隐藏窗口（mac、win隐藏，其他关闭）
  */
 ipcMain.on('windowHidden', (event) => {
-    if (process.platform === 'darwin') {
+    if (['darwin', 'win32'].includes(process.platform)) {
         app.hide();
     } else {
         app.quit();
@@ -283,11 +246,31 @@ ipcMain.on('windowClose', (event) => {
 })
 
 /**
- * 关闭窗口（强制）
+ * 销毁窗口
  */
 ipcMain.on('windowDestroy', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win.destroy()
+    event.returnValue = "ok"
+})
+
+/**
+ * 关闭所有子窗口
+ */
+ipcMain.on('subWindowCloseAll', (event) => {
+    subWindow.some(({browser}) => {
+        browser && browser.close()
+    })
+    event.returnValue = "ok"
+})
+
+/**
+ * 销毁所有子窗口
+ */
+ipcMain.on('subWindowDestroyAll', (event) => {
+    subWindow.some(({browser}) => {
+        browser && browser.destroy()
+    })
     event.returnValue = "ok"
 })
 
@@ -398,12 +381,68 @@ ipcMain.on('setDockBadge', (event, args) => {
         // Mac only
         return;
     }
-    if (utils.runNum(args) > 0) {
-        app.dock.setBadge(String(args))
-    } else {
-        app.dock.setBadge("")
+    let num = args;
+    let tray = true;
+    if (utils.isJson(args)) {
+        num = args.num
+        tray = !!args.tray
+    }
+    let text = utils.runNum(num) > 0 ? String(num) : ""
+    app.dock.setBadge(text)
+    if (tray && mainTray) {
+        mainTray.setTitle(text)
     }
     event.returnValue = "ok"
+})
+
+//================================================================
+// Update
+//================================================================
+
+let autoUpdating = 0
+autoUpdater.logger = log
+autoUpdater.autoDownload = false
+autoUpdater.on('update-available', info => {
+    mainWindow.webContents.send("updateAvailable", info)
+})
+autoUpdater.on('update-downloaded', info => {
+    mainWindow.webContents.send("updateDownloaded", info)
+})
+
+/**
+ * 检查更新
+ */
+ipcMain.on('updateCheckAndDownload', (event, args) => {
+    event.returnValue = "ok"
+    if (autoUpdating + 3600 > utils.Time()) {
+        return  // 限制1小时仅执行一次
+    }
+    if (args.provider) {
+        autoUpdater.setFeedURL(args)
+    }
+    autoUpdater.checkForUpdates().then(info => {
+        if (utils.compareVersion(config.version, info.updateInfo.version) >= 0) {
+            return
+        }
+        if (args.apiVersion) {
+            if (utils.compareVersion(info.updateInfo.version, args.apiVersion) === 0) {
+                autoUpdating = utils.Time()
+                autoUpdater.downloadUpdate().then(_ => {}).catch(_ => {})
+            }
+        } else {
+            autoUpdating = utils.Time()
+            autoUpdater.downloadUpdate().then(_ => {}).catch(_ => {})
+        }
+    })
+})
+
+/**
+ * 退出并安装更新
+ */
+ipcMain.on('updateQuitAndInstall', (event) => {
+    event.returnValue = "ok"
+    willQuitApp = true
+    setTimeout(() => autoUpdater.quitAndInstall(), 1)
 })
 
 //================================================================

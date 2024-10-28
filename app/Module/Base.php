@@ -61,19 +61,29 @@ class Base
     }
 
     /**
+     * 获取package配置文件
+     * @return array
+     */
+    public static function getPackage()
+    {
+        return Cache::remember("Base::package", now()->addSeconds(10), function () {
+            $file = base_path('package.json');
+            if (file_exists($file)) {
+                $package = json_decode(file_get_contents($file), true);
+                return is_array($package) ? $package : [];
+            }
+            return [];
+        });
+    }
+
+    /**
      * 获取版本号
      * @return string
      */
     public static function getVersion()
     {
-        return Cache::remember("Base::version", now()->addSeconds(10), function () {
-            $file = base_path('package.json');
-            if (file_exists($file)) {
-                $packageArray = json_decode(file_get_contents($file), true);
-                return $packageArray['version'] ?? '1.0.0';
-            }
-            return '1.0.0';
-        });
+        $package = self::getPackage();
+        return $package['version'] ?? '1.0.0';
     }
 
     /**
@@ -986,13 +996,16 @@ class Base
 
     /**
      * 检测邮箱格式
-     * @param string $str 需要检测的字符串
-     * @return int
+     * @param $str
+     * @return bool
      */
     public static function isEmail($str)
     {
-        $RegExp = '/^[a-z0-9][a-z\.0-9-_]+@[a-z0-9_-]+(?:\.[a-z]{0,3}\.[a-z]{0,2}|\.[a-z]{0,3}|\.[a-z]{0,2})$/i';
-        return preg_match($RegExp, $str);
+        if (filter_var($str, FILTER_VALIDATE_EMAIL)) {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     /**
@@ -1208,11 +1221,12 @@ class Base
 
     /**
      * 获取或设置
-     * @param $setname //配置名称
-     * @param bool $array //保存内容
+     * @param $setname          // 配置名称
+     * @param bool $array       // 保存内容
+     * @param false $isUpdate   // 保存内容为更新模式，默认否
      * @return array
      */
-    public static function setting($setname, $array = false)
+    public static function setting($setname, $array = false, $isUpdate = false)
     {
         global $_A;
         if (empty($setname)) {
@@ -1223,15 +1237,19 @@ class Base
         }
         $setting = [];
         $row = Setting::whereName($setname)->first();
-        if (!empty($row)) {
+        if ($row) {
             $setting = Base::string2array($row->setting);
         } else {
             $row = Setting::createInstance(['name' => $setname]);
             $row->save();
         }
         if ($array !== false) {
-            $setting = $array;
-            $row->updateInstance(['setting' => $array]);
+            if ($isUpdate && is_array($array)) {
+                $setting = array_merge($setting, $array);
+            } else {
+                $setting = $array;
+            }
+            $row->updateInstance(['setting' => $setting]);
             $row->save();
         }
         $_A["__static_setting_" . $setname] = $setting;
@@ -2301,21 +2319,24 @@ class Base
                 case 'md':
                     $type = ['md'];
                     break;
+                case 'desktop':
+                    $type = ['yml', 'yaml', 'dmg', 'pkg', 'blockmap', 'zip', 'exe', 'msi'];
+                    break;
                 case 'more':
                     $type = [
                         'text', 'md', 'markdown',
                         'drawio',
                         'mind',
                         'docx', 'wps', 'doc', 'xls', 'xlsx', 'ppt', 'pptx',
-                        'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw',
-                        'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z',
+                        'jpg', 'jpeg', 'png', 'gif', 'bmp', 'ico', 'raw', 'svg',
+                        'rar', 'zip', 'jar', '7-zip', 'tar', 'gzip', '7z', 'gz', 'apk', 'dmg',
                         'tif', 'tiff',
                         'dwg', 'dxf',
                         'ofd',
                         'pdf',
                         'txt',
                         'htaccess', 'htgroups', 'htpasswd', 'conf', 'bat', 'cmd', 'cpp', 'c', 'cc', 'cxx', 'h', 'hh', 'hpp', 'ino', 'cs', 'css',
-                        'dockerfile', 'go', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
+                        'dockerfile', 'go', 'golang', 'html', 'htm', 'xhtml', 'vue', 'we', 'wpy', 'java', 'js', 'jsm', 'jsx', 'json', 'jsp', 'less', 'lua', 'makefile', 'gnumakefile',
                         'ocamlmakefile', 'make', 'mysql', 'nginx', 'ini', 'cfg', 'prefs', 'm', 'mm', 'pl', 'pm', 'p6', 'pl6', 'pm6', 'pgsql', 'php',
                         'inc', 'phtml', 'shtml', 'php3', 'php4', 'php5', 'phps', 'phpt', 'aw', 'ctp', 'module', 'ps1', 'py', 'r', 'rb', 'ru', 'gemspec', 'rake', 'guardfile', 'rakefile',
                         'gemfile', 'rs', 'sass', 'scss', 'sh', 'bash', 'bashrc', 'sql', 'sqlserver', 'swift', 'ts', 'typescript', 'str', 'vbs', 'vb', 'v', 'vh', 'sv', 'svh', 'xml',
@@ -2343,7 +2364,9 @@ class Base
                 $fileSize = 0;
             }
             $scaleName = "";
-            if ($param['fileName']) {
+            if ($param['fileName'] === true) {
+                $fileName = $file->getClientOriginalName();
+            } elseif ($param['fileName']) {
                 $fileName = $param['fileName'];
             } else {
                 if ($param['scale'] && is_array($param['scale'])) {
@@ -2748,16 +2771,19 @@ class Base
     /**
      * 遍历获取文件
      * @param $dir
+     * @param bool $subdirectory    是否遍历子目录
      * @return array
      */
-    public static function readDir($dir)
+    public static function readDir($dir, $subdirectory = true)
     {
         $files = array();
         $dir_list = scandir($dir);
         foreach ($dir_list as $file) {
             if ($file != '..' && $file != '.') {
                 if (is_dir($dir . '/' . $file)) {
-                    $files = array_merge($files, self::readDir($dir . '/' . $file));
+                    if ($subdirectory) {
+                        $files = array_merge($files, self::readDir($dir . '/' . $file, $subdirectory));
+                    }
                 } else {
                     $files[] = $dir . "/" . $file;
                 }
@@ -2985,6 +3011,18 @@ class Base
         }
         $matrix = array_unique($matrix, SORT_REGULAR);
         return array_merge($matrix);
+    }
+
+    /**
+     * 字节转格式
+     * @param $bytes
+     * @return string
+     */
+    public static function readableBytes($bytes)
+    {
+        $i = floor(log($bytes) / log(1024));
+        $sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+        return sprintf('%.02F', $bytes / pow(1024, $i)) * 1 . ' ' . $sizes[$i];
     }
 
     /**

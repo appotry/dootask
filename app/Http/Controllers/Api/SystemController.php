@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\User;
 use App\Module\Base;
+use Guanguans\Notify\Factory;
+use Guanguans\Notify\Messages\EmailMessage;
 use Request;
 use Response;
 
@@ -25,7 +27,7 @@ class SystemController extends AbstractController
      * @apiParam {String} type
      * - get: 获取（默认）
      * - all: 获取所有（需要管理员权限）
-     * - save: 保存设置（参数：reg、reg_invite、login_code、password_policy、project_invite、chat_nickname、auto_archived、archived_day、start_home、home_footer）
+     * - save: 保存设置（参数：['reg', 'reg_invite', 'login_code', 'password_policy', 'project_invite', 'chat_nickname', 'auto_archived', 'archived_day', 'start_home', 'home_footer']）
 
      * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
      * @apiSuccess {String} msg     返回信息（错误描述）
@@ -41,7 +43,18 @@ class SystemController extends AbstractController
             User::auth('admin');
             $all = Request::input();
             foreach ($all AS $key => $value) {
-                if (!in_array($key, ['reg', 'reg_invite', 'login_code', 'password_policy', 'project_invite', 'chat_nickname', 'auto_archived', 'archived_day', 'start_home', 'home_footer'])) {
+                if (!in_array($key, [
+                    'reg',
+                    'reg_invite',
+                    'login_code',
+                    'password_policy',
+                    'project_invite',
+                    'chat_nickname',
+                    'auto_archived',
+                    'archived_day',
+                    'start_home',
+                    'home_footer'
+                ])) {
                     unset($all[$key]);
                 }
             }
@@ -78,7 +91,7 @@ class SystemController extends AbstractController
     }
 
     /**
-     * @api {get} api/system/setting/email          02. 获取邮箱设置、保存邮箱设置
+     * @api {get} api/system/setting/email          02. 获取邮箱设置、保存邮箱设置（限管理员）
      *
      * @apiVersion 1.0.0
      * @apiGroup system
@@ -86,36 +99,38 @@ class SystemController extends AbstractController
      *
      * @apiParam {String} type
      * - get: 获取（默认）
-     * - all: 获取所有（需要管理员权限）
-     * - save: 保存设置（参数：smtp_server port account password reg_verify notice task_remind_hours task_remind_hours2）
+     * - save: 保存设置（参数：['smtp_server', 'port', 'account', 'password', 'reg_verify', 'notice', 'task_remind_hours', 'task_remind_hours2']）
      * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
      * @apiSuccess {String} msg     返回信息（错误描述）
      * @apiSuccess {Object} data    返回数据
      */
     public function setting__email()
     {
+        User::auth('admin');
+        //
         $type = trim(Request::input('type'));
         if ($type == 'save') {
             if (env("SYSTEM_SETTING") == 'disabled') {
                 return Base::retError('当前环境禁止修改');
             }
-            User::auth('admin');
             $all = Request::input();
             foreach ($all as $key => $value) {
-                if (!in_array($key, ['smtp_server', 'port', 'account', 'password', 'reg_verify', 'notice', 'task_remind_hours', 'task_remind_hours2'])) {
+                if (!in_array($key, [
+                    'smtp_server',
+                    'port',
+                    'account',
+                    'password',
+                    'reg_verify',
+                    'notice',
+                    'task_remind_hours',
+                    'task_remind_hours2'
+                ])) {
                     unset($all[$key]);
                 }
             }
             $setting = Base::setting('emailSetting', Base::newTrim($all));
         } else {
             $setting = Base::setting('emailSetting');
-        }
-        //
-        if ($type == 'all' || $type == 'save') {
-            User::auth('admin');
-            $setting['reg_invite'] = $setting['reg_invite'] ?: Base::generatePassword(8);
-        } else {
-            if (isset($setting['reg_invite'])) unset($setting['reg_invite']);
         }
         //
         $setting['smtp_server'] = $setting['smtp_server'] ?: '';
@@ -533,7 +548,6 @@ class SystemController extends AbstractController
         return $data;
     }
 
-
     /**
      * @api {get} api/system/get/starthome          14. 启动首页设置信息
      *
@@ -554,4 +568,45 @@ class SystemController extends AbstractController
         ]);
     }
 
+    /**
+     * @api {get} api/system/email/check          15. 邮件发送测试（限管理员）
+     *
+     * @apiDescription 测试配置邮箱是否能发送邮件
+     * @apiVersion 1.0.0
+     * @apiGroup system
+     * @apiName email__check
+     *
+     * @apiSuccess {Number} ret     返回状态码（1正确、0错误）
+     * @apiSuccess {String} msg     返回信息（错误描述）
+     * @apiSuccess {Object} data    返回数据
+     */
+    public function email__check()
+    {
+        User::auth('admin');
+        //
+        $all = Request::input();
+        if (!Base::isEmail($all['to'])) {
+            return Base::retError('请输入正确的收件人地址');
+        }
+        try {
+            Factory::mailer()
+                ->setDsn("smtp://{$all['account']}:{$all['password']}@{$all['smtp_server']}:{$all['port']}?verify_peer=0")
+                ->setMessage(EmailMessage::create()
+                    ->from(env('APP_NAME', 'Task') . " <{$all['account']}>")
+                    ->to($all['to'])
+                    ->subject('Mail sending test')
+                    ->html('<p>收到此电子邮件意味着您的邮箱配置正确。</p><p>Receiving this email means that your mailbox is configured correctly.</p>'))
+                ->send();
+            return Base::retSuccess('成功发送');
+        } catch (\Exception $e) {
+            // 一般是请求超时
+            if (str_contains($e->getMessage(), "Timed Out")) {
+                return Base::retError("language.TimedOut");
+            } elseif ($e->getCode() === 550) {
+                return Base::retError('邮件内容被拒绝，请检查邮箱是否开启接收功能');
+            } else {
+                return Base::retError($e->getMessage());
+            }
+        }
+    }
 }
